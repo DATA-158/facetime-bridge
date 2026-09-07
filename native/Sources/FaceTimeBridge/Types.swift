@@ -71,8 +71,15 @@ struct ControlResult: Encodable {
 struct TargetIdentity {
     let handle: String
     let digits: String
+    // Optional trusted display name for the authorized caller. macOS 26 renders
+    // an incoming FaceTime Audio banner as the iCloud contact name with NO digits
+    // (observed 2026-09-06 19:24: "\u{202A}Captain Spencer\u{202C}, FaceTime
+    // \u{00A0}Audio"), which fail-closed the digits-only matcher. The name is
+    // accepted ONLY in the banner ring path (StateClassifier.bannerNameIdentity),
+    // never in general authority matching — display text must not authorize state.
+    let displayName: String?
 
-    init(handle: String) throws {
+    init(handle: String, displayName: String? = nil) throws {
         let trimmedHandle = handle.trimmingCharacters(in: .whitespacesAndNewlines)
         let e164 = handle.range(of: #"^\+[1-9][0-9]{7,14}$"#, options: .regularExpression) != nil
         guard handle == trimmedHandle, e164 else {
@@ -80,6 +87,7 @@ struct TargetIdentity {
         }
         self.handle = handle
         digits = String(handle.dropFirst())
+        self.displayName = displayName
     }
 }
 

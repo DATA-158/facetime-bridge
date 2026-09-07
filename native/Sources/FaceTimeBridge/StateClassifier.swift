@@ -89,7 +89,13 @@ private func timerValue(_ text: String) -> String? {
     let range = NSRange(text.startIndex..., in: text)
     guard let match = durationExpression.firstMatch(in: text, range: range),
           let swiftRange = Range(match.range, in: text) else { return nil }
-    return String(text[swiftRange])
+    let value = String(text[swiftRange])
+    // A real in-call timer runs UP from low values and lives on a call surface.
+    // Recents timestamps ("4:27 PM") share the m:ss shape and made missed-call
+    // rows classify as connected (ghost-call bug, 2026-09-06), masking rings.
+    // Reject leading-hour values; no session reaches an hour of screening.
+    guard value.first.map({ $0.isNumber && $0 != "0" }) == true else { return value }
+    return nil
 }
 
 func surfaceAuthorized(_ surface: AXSurface, target: TargetIdentity?) -> Bool {
@@ -111,7 +117,7 @@ func authorizedIncomingNodes(on surface: AXSurface, target: TargetIdentity?) -> 
     guard let target else { return [] }
     if surface.bundleID == "com.apple.FaceTime" {
         let authorizedCards = Set(surface.nodes.compactMap { node -> Int? in
-            guard node.texts.contains(where: { identifiesTarget($0, target: target) }) else { return nil }
+            guard node.texts.contains(where: { identifiesTarget($0, target: target) || bannerNameIdentity($0, target: target) }) else { return nil }
             return node.parentIndex
         })
         guard authorizedCards.count == 1, let card = authorizedCards.first else { return [] }
@@ -120,7 +126,7 @@ func authorizedIncomingNodes(on surface: AXSurface, target: TargetIdentity?) -> 
     guard surface.bundleID == "com.apple.notificationcenterui" else { return [] }
     let identityCards = surface.nodes.filter { node in
         node.texts.contains { text in
-            identifiesTarget(text, target: target)
+            (identifiesTarget(text, target: target) || bannerNameIdentity(text, target: target))
                 && semanticContains(text, "FaceTime Audio")
                 && timerValue(text) == nil
                 && !semanticContains(text, "Click to Call")
@@ -132,6 +138,36 @@ func authorizedIncomingNodes(on surface: AXSurface, target: TargetIdentity?) -> 
     guard identityCards.count == 1,
           let cardParent = identityCards.first?.parentIndex else { return [] }
     return surface.nodes.filter { semanticAction($0, labels: answerLabels) && $0.parentIndex == cardParent }
+}
+
+/// Banner-only trusted-name matching for the incoming ring card. macOS 26
+/// renders the authorized caller's iCloud contact name with no digits; accept
+/// it only when the text is a call banner ("Name, FaceTime Audio"), never in
+/// general authority matching (identifiesTarget stays digits-only so display
+/// text cannot authorize state).
+func bannerNameIdentity(_ text: String, target: TargetIdentity) -> Bool {
+    guard let name = target.displayName, !name.isEmpty else { return false }
+    // BiDi controls (LRE/PDF 202A-202E, LRI/PDI 2066-2069, LRM/RLM 200E/200F)
+    // wrap the caller name in the live banner ("\u{202A}Captain Spencer\u{202C},
+    // FaceTime\u{00A0}Audio") — strip them before prefix matching.
+    let normalized = normalizedSemanticText(text).filter { ch in
+        !("\u{202A}"..."\u{202E}").contains(ch)
+            && !("\u{2066}"..."\u{2069}").contains(ch)
+            && ch != "\u{200E}" && ch != "\u{200F}"
+    }
+    guard normalized.contains("FaceTime Audio"),
+          !semanticContains(normalized, "Click to Call"),
+          !semanticContains(normalized, "ended"),
+          !semanticContains(normalized, "missed"),
+          !semanticContains(normalized, "left"),
+          timerValue(normalized) == nil else { return false }
+    let nameNorm = normalizedSemanticText(name)
+    let prefix = normalized.prefix(nameNorm.count)
+    guard prefix.compare(nameNorm, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame else { return false }
+    // Exact-name boundary: the name must be followed by the ", FaceTime Audio"
+    // separator or end-of-text, so "Captain Spencer Jr" can't match "Captain Spencer".
+    let rest = normalized.dropFirst(nameNorm.count)
+    return rest.isEmpty || rest.hasPrefix(",") || rest.hasPrefix(" -")
 }
 
 func state(of surface: AXSurface, target: TargetIdentity?) -> StateEvidence {
@@ -231,6 +267,23 @@ func identityDigitFixturePasses() -> Bool {
           !identifiesTarget("+91 555 010 10011, FaceTime Audio", target: target),
           !identifiesTarget("+1 (555) 010-100, FaceTime Audio - , 1:00", target: target),
           !identifiesTarget("Untrusted Display Label, FaceTime Audio - , 0:09", target: target) else { return false }
+    // Name-identity fixture from the live macOS 26 ring capture 2026-09-06
+    // 19:24: bidi isolates around the contact name, non-breaking space in
+    // "FaceTime\u{00A0}Audio", no digits anywhere on the card.
+    let named = try! TargetIdentity(handle: "+15550101001", displayName: "Captain Spencer")
+    guard bannerNameIdentity("\u{202A}Captain Spencer\u{202C}, FaceTime\u{00A0}Audio", target: named),
+          bannerNameIdentity("Captain Spencer, FaceTime Audio", target: named) else { return false }
+    // Boundaries: longer/other names, non-banner text, timers, ended labels.
+    guard !bannerNameIdentity("Captain Spencer Jr, FaceTime Audio", target: named),
+          !bannerNameIdentity("Captain Spencerine, FaceTime Audio", target: named),
+          !bannerNameIdentity("Other Person, FaceTime Audio", target: named),
+          !bannerNameIdentity("Captain Spencer, Missed call, Incoming FaceTime Audio", target: named),
+          !bannerNameIdentity("Captain Spencer, FaceTime Audio, 0:12", target: named),
+          !bannerNameIdentity("Captain Spencer", target: named),
+          !bannerNameIdentity("Untrusted Display Label, FaceTime Audio", target: named) else { return false }
+    // A target WITHOUT a configured name keeps the old behavior exactly.
+    let digitsOnly = try! TargetIdentity(handle: "+15550101001")
+    guard !bannerNameIdentity("Captain Spencer, FaceTime Audio", target: digitsOnly) else { return false }
     return true
 }
 

@@ -17,6 +17,7 @@ enum ControlRunnerError: Error {
 
 struct ControlRunner: Sendable {
   static let authorizedCallerEnvironmentKey = "FACETIME_BRIDGE_AUTHORIZED_CALLER_E164"
+  static let authorizedCallerNameKey = "FACETIME_BRIDGE_AUTHORIZED_CALLER_NAME"
 
   func run(_ command: ControlCommand) throws -> ControlEvidence {
     let target = try loadTarget()
@@ -53,7 +54,8 @@ struct ControlRunner: Sendable {
     guard let handle = environment[Self.authorizedCallerEnvironmentKey] else {
       throw ControlRunnerError.missingAuthorizedCallerE164
     }
-    guard let target = try? TargetIdentity(handle: handle) else {
+    let displayName = environment[Self.authorizedCallerNameKey]
+    guard let target = try? TargetIdentity(handle: handle, displayName: displayName) else {
       throw ControlRunnerError.invalidAuthorizedCallerE164
     }
     return target
