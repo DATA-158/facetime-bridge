@@ -310,10 +310,16 @@ struct PressMatch {
 
 func axPressMatches(in snapshot: AXSnapshot, process: String, contains: String) -> [PressMatch] {
     let needle = normalizedSemanticText(contains)
+    // Process name matching is case- and whitespace-insensitive: NSWorkspace
+    // reports NC's executable name "NotificationCenter", while humans (and
+    // voice_loop's CLI arg) naturally write "Notification Center".
+    func sameProcess(_ a: String, _ b: String) -> Bool {
+        a.caseInsensitiveCompare(b) == .orderedSame
+            || a.replacingOccurrences(of: " ", with: "").caseInsensitiveCompare(
+                b.replacingOccurrences(of: " ", with: "")) == .orderedSame
+    }
     return snapshot.surfaces
-        // Process name matching is case-insensitive ("Notification Center"
-        // vs "notification center" must both find the tray).
-        .filter { $0.process.compare(process, options: [.caseInsensitive]) == .orderedSame }
+        .filter { sameProcess($0.process, process) }
         .flatMap { surface in
             surface.nodes.compactMap { node -> PressMatch? in
                 guard node.role == (kAXButtonRole as String),
