@@ -107,6 +107,9 @@ struct AXNode {
     let enabled: Bool
     let actions: [String]
     let parentIndex: Int?
+    // Top-left global screen coordinates + size in points, from
+    // kAXPositionAttribute/kAXSizeAttribute. nil when unreadable.
+    let frame: Frame?
 
     init(
         element: AXUIElement,
@@ -118,7 +121,8 @@ struct AXNode {
         help: String,
         enabled: Bool,
         actions: [String],
-        parentIndex: Int? = nil
+        parentIndex: Int? = nil,
+        frame: Frame? = nil
     ) {
         self.element = element
         self.role = role
@@ -130,11 +134,20 @@ struct AXNode {
         self.enabled = enabled
         self.actions = actions
         self.parentIndex = parentIndex
+        self.frame = frame
     }
 
     var texts: [String] {
         [title, description, value, help, identifier].filter { !$0.isEmpty }
     }
+}
+
+struct Frame {
+    // Top-left global screen coordinates (points) and size.
+    let x: Double
+    let y: Double
+    let w: Double
+    let h: Double
 }
 
 struct AXSurface {

@@ -65,7 +65,9 @@ private func runDirectControl(_ command: ControlCommand) -> Never {
   }
 }
 
-if CommandLine.arguments.dropFirst().elementsEqual(["--ax-snapshot"]) {
+let arguments = Array(CommandLine.arguments.dropFirst())
+
+if arguments.elementsEqual(["--ax-snapshot"]) {
   guard AXIsProcessTrusted() else {
     fputs("Accessibility permission is required\n", stderr)
     exit(1)
@@ -76,7 +78,42 @@ if CommandLine.arguments.dropFirst().elementsEqual(["--ax-snapshot"]) {
   exit(0)
 }
 
-if CommandLine.arguments.dropFirst().elementsEqual(["--self-check"]) {
+// Coordinate-locating snapshot variant: --ax-snapshot --frames. Same scan, but
+// the keyword filter is SKIPPED (a Mute/muted-mic control carries none of the
+// call keywords) and each node gains optional 'frame' and 'label'. Additive
+// sibling of the default mode above — the default output shape is untouched.
+if arguments.elementsEqual(["--ax-snapshot", "--frames"]) {
+  guard AXIsProcessTrusted() else {
+    fputs("Accessibility permission is required\n", stderr)
+    exit(1)
+  }
+  let data = try JSONSerialization.data(withJSONObject: frameAccessibilitySnapshot(), options: [.sortedKeys])
+  print(String(decoding: data, as: UTF8.self))
+  exit(0)
+}
+
+// --ax-press --process <name> --contains <text>: press the NEWEST enabled
+// pressable button whose texts contain <text> on the named process (the
+// stale-banner law — dead banners stack in the tray, newest is freshest).
+// Prints {"pressed": true, "matched": ...} or {"pressed": false, "reason": ...}.
+if arguments.count == 5,
+   arguments[0] == "--ax-press",
+   arguments[1] == "--process",
+   arguments[3] == "--contains" {
+  guard AXIsProcessTrusted() else {
+    fputs("Accessibility permission is required\n", stderr)
+    exit(1)
+  }
+  let outcome = performAXPress(process: arguments[2], contains: arguments[3 + 1])
+  let payload: [String: Any] = outcome.pressed
+    ? ["pressed": true, "matched": outcome.matched as Any]
+    : ["pressed": false, "reason": (outcome.reason ?? "press failed") as Any]
+  let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+  print(String(decoding: data, as: UTF8.self))
+  exit(Int32(outcome.exitCode))
+}
+
+if arguments.elementsEqual(["--self-check"]) {
   guard shouldAnswerIncoming(state: "ringing", authorized: true),
         !shouldAnswerIncoming(state: "ringing", authorized: false),
         !shouldAnswerIncoming(state: "ambiguous", authorized: true),
@@ -94,12 +131,11 @@ if CommandLine.arguments.dropFirst().elementsEqual(["--self-check"]) {
   exit(0)
 }
 
-let arguments = Array(CommandLine.arguments.dropFirst())
 if arguments.count == 1, let command = ControlCommand(rawValue: arguments[0]) {
   runDirectControl(command)
 }
 if !arguments.isEmpty {
-  fputs("Usage: facetime-bridge [probe|call|answer|hangup|--self-check|--ax-snapshot]\n", stderr)
+  fputs("Usage: facetime-bridge [probe|call|answer|hangup|--self-check|--ax-snapshot|--ax-press]\n", stderr)
   exit(2)
 }
 
