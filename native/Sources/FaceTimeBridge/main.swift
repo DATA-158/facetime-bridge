@@ -118,6 +118,7 @@ if arguments.elementsEqual(["--self-check"]) {
         !shouldAnswerIncoming(state: "ringing", authorized: false),
         !shouldAnswerIncoming(state: "ambiguous", authorized: true),
         faceTimeIncomingFixturePasses(),
+        outgoingPromptFixturePasses(),
         identityDigitFixturePasses(),
         authorityLifecyclePasses(),
         CallWaveRecorder.selfCheck(),

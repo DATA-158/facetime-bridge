@@ -170,6 +170,31 @@ func bannerNameIdentity(_ text: String, target: TargetIdentity) -> Bool {
     return rest.isEmpty || rest.hasPrefix(",") || rest.hasPrefix(" -")
 }
 
+/// Trusted-name matching for the OUTGOING Click-to-Call card. macOS 26.6
+/// renders it as "<Contact Name>, Click to Call" with no digits anywhere
+/// (observed live 2026-09-11 15:31 via --ax-snapshot --frames:
+/// AXGenericElement "Captain Spencer, Click to Call" + AXButton "Call" +
+/// AXButton "Cancel"), so the digits-only matcher never authorized the press
+/// and Control(CALL) always ended in PROMPT_TIMEOUT. Same trust model as
+/// bannerNameIdentity: the name comes only from
+/// FACETIME_BRIDGE_AUTHORIZED_CALLER_NAME, must match exactly at a word
+/// boundary, and is accepted only in this card shape.
+func promptNameIdentity(_ text: String, target: TargetIdentity) -> Bool {
+    guard let name = target.displayName, !name.isEmpty else { return false }
+    let normalized = normalizedSemanticText(text).filter { ch in
+        !("\u{202A}"..."\u{202E}").contains(ch)
+            && !("\u{2066}"..."\u{2069}").contains(ch)
+            && ch != "\u{200E}" && ch != "\u{200F}"
+    }
+    guard semanticContains(normalized, "Click to Call"),
+          timerValue(normalized) == nil else { return false }
+    let nameNorm = normalizedSemanticText(name)
+    let prefix = normalized.prefix(nameNorm.count)
+    guard prefix.compare(nameNorm, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame else { return false }
+    let rest = normalized.dropFirst(nameNorm.count)
+    return rest.hasPrefix(",") || rest.hasPrefix(" -")
+}
+
 func state(of surface: AXSurface, target: TargetIdentity?) -> StateEvidence {
     let texts = surface.nodes.flatMap(\.texts)
     let authorized = surfaceAuthorized(surface, target: target)
@@ -181,8 +206,10 @@ func state(of surface: AXSurface, target: TargetIdentity?) -> StateEvidence {
         && hasFaceTime
         && texts.contains { semanticContains($0, "left") }
     let ringing = !authorizedIncomingNodes(on: surface, target: target).isEmpty
+    let promptNamed = surface.bundleID == "com.apple.notificationcenterui"
+        && target.map { t in texts.contains { promptNameIdentity($0, target: t) } } == true
     let prompt = surface.bundleID == "com.apple.notificationcenterui"
-        && authorized
+        && (authorized || promptNamed)
         && texts.contains { semanticContains($0, "Click to Call") }
         && surface.nodes.contains { semanticAction($0, labels: outgoingLabels) }
     // A visible ended label wins over a timer: "Call Ended 0:12" summarizes a
@@ -243,7 +270,7 @@ func outgoingCandidates(in snapshot: AXSnapshot, target: TargetIdentity) -> [Act
         // itself carry the authorized E.164 identity, or share its card
         // container (parentIndex) with a node that does.
         let cardParents = Set(surface.nodes.compactMap { node -> Int? in
-            guard node.texts.contains(where: { identifiesTarget($0, target: target) }) else { return nil }
+            guard node.texts.contains(where: { identifiesTarget($0, target: target) || promptNameIdentity($0, target: target) }) else { return nil }
             return node.parentIndex
         })
         return surface.nodes
@@ -284,6 +311,48 @@ func identityDigitFixturePasses() -> Bool {
     // A target WITHOUT a configured name keeps the old behavior exactly.
     let digitsOnly = try! TargetIdentity(handle: "+15550101001")
     guard !bannerNameIdentity("Captain Spencer, FaceTime Audio", target: digitsOnly) else { return false }
+    // Outgoing Click-to-Call card, macOS 26.6 live capture 2026-09-11 15:31.
+    guard promptNameIdentity("Captain Spencer, Click to Call", target: named),
+          promptNameIdentity("\u{202A}Captain Spencer\u{202C}, Click to Call", target: named),
+          !promptNameIdentity("Captain Spencer Jr, Click to Call", target: named),
+          !promptNameIdentity("Other Person, Click to Call", target: named),
+          !promptNameIdentity("Captain Spencer, FaceTime Audio", target: named),
+          !promptNameIdentity("Captain Spencer", target: named),
+          !promptNameIdentity("Captain Spencer, Click to Call", target: digitsOnly) else { return false }
+    return true
+}
+
+/// The macOS 26.6 outgoing Click-to-Call card exactly as captured live
+/// 2026-09-11 15:31 (--ax-snapshot --frames): one card parent with an
+/// AXGenericElement "<Name>, Click to Call", AXButton "Call", AXButton
+/// "Cancel"; no digits anywhere. With the trusted name configured the
+/// classifier must read .prompt and outgoingCandidates must return exactly
+/// the Call button; without the name it must stay fail-closed.
+func outgoingPromptFixturePasses() -> Bool {
+    let element = AXUIElementCreateApplication(0)
+    func node(_ role: String, _ desc: String, press: Bool) -> AXNode {
+        AXNode(element: element, role: role, identifier: "", title: "", description: desc, value: "",
+               help: "", enabled: true, actions: press ? [kAXPressAction as String] : [], parentIndex: 3)
+    }
+    let nodes = [
+        node("AXGenericElement", "FaceTime Audio", press: true),
+        node("AXGenericElement", "\u{202A}Captain Spencer\u{202C}, Click to Call", press: true),
+        node(kAXButtonRole as String, "Call", press: true),
+        node(kAXButtonRole as String, "Cancel", press: true),
+    ]
+    let surface = AXSurface(pid: 0, process: "NotificationCenter", bundleID: "com.apple.notificationcenterui", nodes: nodes)
+    let snapshot = AXSnapshot(surfaces: [surface])
+    let named = try! TargetIdentity(handle: "+15550101001", displayName: "Captain Spencer")
+    guard state(of: surface, target: named).state == .prompt else { return false }
+    let candidates = outgoingCandidates(in: snapshot, target: named)
+    guard candidates.count == 1, candidates[0].node.texts.contains("Call") else { return false }
+    // Wrong name, or no name: no press.
+    let wrongName = try! TargetIdentity(handle: "+15550101001", displayName: "Someone Else")
+    guard state(of: surface, target: wrongName).state != .prompt,
+          outgoingCandidates(in: snapshot, target: wrongName).isEmpty else { return false }
+    let digitsOnly = try! TargetIdentity(handle: "+15550101001")
+    guard state(of: surface, target: digitsOnly).state != .prompt,
+          outgoingCandidates(in: snapshot, target: digitsOnly).isEmpty else { return false }
     return true
 }
 
