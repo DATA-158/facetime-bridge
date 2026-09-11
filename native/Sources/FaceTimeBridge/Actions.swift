@@ -156,8 +156,38 @@ private func hasUnverifiedIncomingCall(_ snapshot: AXSnapshot) -> Bool {
     }
 }
 
+// Inbound rings on this OS have never produced a .ringing classification
+// (2026-09-11: a call rang out with nothing logged). Fail-closed means the
+// reason is invisible unless we capture the card: whenever a Notification
+// Center surface carries a FaceTime Audio card that is NOT a Click-to-Call
+// prompt and the classifier still reads idle, dump one flight snapshot
+// (rate-limited) so the next unrecognized ring diagnoses itself.
+nonisolated(unsafe) private var lastUnrecognizedDump = Date.distantPast
+
+private func noteUnrecognizedCard(_ snapshot: AXSnapshot, evidence: StateEvidence, target: TargetIdentity?) {
+    guard evidence.state == .idle, let target else { return }
+    let hasCard = snapshot.surfaces.contains { surface in
+        surface.bundleID == "com.apple.notificationcenterui"
+            && surface.nodes.contains { node in
+                node.texts.contains {
+                    semanticContains($0, "FaceTime Audio")
+                        && !semanticContains($0, "Click to Call")
+                        && !semanticContains($0, "missed")
+                        && !semanticContains($0, "ended")
+                        && !semanticContains($0, "left")
+                }
+            }
+    }
+    guard hasCard, Date().timeIntervalSince(lastUnrecognizedDump) > 15 else { return }
+    lastUnrecognizedDump = Date()
+    ftbLog("probe: FaceTime card present but unrecognized (state=idle) — dumping flight snapshot")
+    dumpFlightSnapshot(target: target, reason: "unrecognized-facetime-card")
+}
+
 func probeFaceTime(target: TargetIdentity?) -> ControlResult {
-    let evidence = withAuthority(state(of: scanAccessibility(), target: target))
+    let snapshot = scanAccessibility()
+    let evidence = withAuthority(state(of: snapshot, target: target))
+    noteUnrecognizedCard(snapshot, evidence: evidence, target: target)
     return result(command: .probe, ok: true, evidence: evidence, message: "FaceTime state inspected")
 }
 

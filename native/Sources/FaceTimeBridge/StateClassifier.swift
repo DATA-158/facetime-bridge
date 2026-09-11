@@ -4,7 +4,10 @@ import Foundation
 
 private let outgoingLabels = ["Call", "FaceTime Audio", "communication audio"]
 private let incomingAudioLabels = ["Accept Audio Call"]
-let answerLabels = ["Answer"]
+// "Answer" is the 26.4 label the author captured; macOS 26.6 notification
+// cards use Accept/Decline (the outgoing card already uses Call/Cancel, see
+// promptNameIdentity). Both stay behind the card-identity check.
+let answerLabels = ["Answer", "Accept"]
 private let dialingLabels = ["Dialing", "Dialing…", "Calling", "Calling…", "Connecting", "Connecting…"]
 private let connectedLabels = ["Connected"]
 private let endedLabels = ["Ended", "Call Ended", "Disconnected"]
