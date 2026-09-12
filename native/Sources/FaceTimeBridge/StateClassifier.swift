@@ -252,8 +252,19 @@ func state(of surface: AXSurface, target: TargetIdentity?) -> StateEvidence {
 }
 
 func state(of snapshot: AXSnapshot, target: TargetIdentity?) -> StateEvidence {
+    let evidences = snapshot.surfaces.map { state(of: $0, target: target) }
+    // An identity-verified ring beats an UNAUTHORIZED connected surface.
+    // Live 2026-09-11 20:49: a lingering Phone.app window (from the previous
+    // answered call) exposed its "communication audio" button while the
+    // authorized ring card was up; connected-first ordering read it as a call
+    // in progress and the ring timed out. A connected surface only outranks
+    // a ring once authority has upgraded it (Actions.withAuthority).
+    if let ring = evidences.first(where: { $0.state == .ringing && $0.authorized }),
+       !evidences.contains(where: { $0.state == .connected && $0.authorized }) {
+        return ring
+    }
     for priority in [CallState.connected, .dialing, .ringing, .prompt, .ended] {
-        if let match = snapshot.surfaces.lazy.map({ state(of: $0, target: target) }).first(where: { $0.state == priority }) {
+        if let match = evidences.first(where: { $0.state == priority }) {
             return match
         }
     }

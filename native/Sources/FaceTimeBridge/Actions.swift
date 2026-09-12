@@ -169,16 +169,21 @@ private func noteUnrecognizedCard(_ snapshot: AXSnapshot, evidence: StateEvidenc
     let hasCard = snapshot.surfaces.contains { surface in
         surface.bundleID == "com.apple.notificationcenterui"
             && surface.nodes.contains { node in
-                node.texts.contains {
-                    semanticContains($0, "FaceTime Audio")
-                        && !semanticContains($0, "Click to Call")
-                        && !semanticContains($0, "missed")
-                        && !semanticContains($0, "ended")
-                        && !semanticContains($0, "left")
+                node.texts.contains { text in
+                    // A live ring card reads "<Name>, FaceTime Audio" — the text
+                    // ENDS there. Any other app's notification mentioning FaceTime
+                    // Audio (2026-09-11: Claude's own "FaceTime Audio Project
+                    // context…") must not trip this.
+                    let t = normalizedSemanticText(text)
+                    return t.hasSuffix("FaceTime Audio")
+                        && !semanticContains(text, "Click to Call")
+                        && !semanticContains(text, "missed")
+                        && !semanticContains(text, "ended")
+                        && !semanticContains(text, "left")
                 }
             }
     }
-    guard hasCard, Date().timeIntervalSince(lastUnrecognizedDump) > 15 else { return }
+    guard hasCard, Date().timeIntervalSince(lastUnrecognizedDump) > 5 else { return }
     lastUnrecognizedDump = Date()
     ftbLog("probe: FaceTime card present but unrecognized (state=idle) — dumping flight snapshot")
     dumpFlightSnapshot(target: target, reason: "unrecognized-facetime-card")

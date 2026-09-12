@@ -42,8 +42,14 @@ struct FaceTimeMediaService: Facetimebridge_V1_FaceTimeMedia.SimpleServiceProtoc
     response: RPCWriter<Facetimebridge_V1_CallEvent>,
     context: ServerContext
   ) async throws {
+    var lastState = ""
     while !context.cancellation.isCancelled {
       let observed = try control.run(.probe)
+      let key = "\(observed.state)/\(observed.authorized)"
+      if key != lastState {
+        ftbLog("waitIncoming: state=\(observed.state) authorized=\(observed.authorized)")
+        lastState = key
+      }
       if observed.errorCode != nil {
         try await response.write(event(from: observed))
         return
@@ -72,9 +78,17 @@ struct FaceTimeMediaService: Facetimebridge_V1_FaceTimeMedia.SimpleServiceProtoc
       throw RPCError(code: .invalidArgument, message: "the first audio packet must start one 24 kHz mono call")
     }
     let recorder = try CallWaveRecorder.fromEnvironment()
-
+    let t0 = Date()
+    ftbLog("audio: START received call_id=\(start.callID)")
     let bridge = AudioBridge()
-    let captures = try bridge.start()
+    let captures: AsyncStream<Data>
+    do {
+      captures = try bridge.start()
+    } catch {
+      ftbLog("audio: bridge.start FAILED after \(Int(Date().timeIntervalSince(t0) * 1000)) ms: \(error)")
+      throw error
+    }
+    ftbLog("audio: bridge started in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
     defer { recorder?.close() }
     let callID = start.callID
     try await response.write(.with {
@@ -84,6 +98,7 @@ struct FaceTimeMediaService: Facetimebridge_V1_FaceTimeMedia.SimpleServiceProtoc
       $0.channels = 1
       $0.event = "ready"
     })
+    ftbLog("audio: ready sent at \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
     let captureTask = Task {
       var sequence: UInt64 = 0
       for await data in captures {
@@ -116,8 +131,10 @@ struct FaceTimeMediaService: Facetimebridge_V1_FaceTimeMedia.SimpleServiceProtoc
       case .clear:
         bridge.clearPlayback()
       case .stop:
+        ftbLog("audio: STOP received")
         bridge.stop()
         _ = try await captureTask.value
+        ftbLog("audio: stream closed")
         return
       default:
         throw RPCError(code: .invalidArgument, message: "unsupported audio packet kind")
