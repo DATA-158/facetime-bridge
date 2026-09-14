@@ -175,7 +175,7 @@ private func noteUnrecognizedCard(_ snapshot: AXSnapshot, evidence: StateEvidenc
                     // Audio (2026-09-11: Claude's own "FaceTime Audio Project
                     // context…") must not trip this.
                     let t = normalizedSemanticText(text)
-                    return t.hasSuffix("FaceTime Audio")
+                    return (t.hasSuffix("FaceTime Audio") || t.hasSuffix("FaceTime Video") || t.hasSuffix(", FaceTime"))
                         && !semanticContains(text, "Click to Call")
                         && !semanticContains(text, "missed")
                         && !semanticContains(text, "ended")

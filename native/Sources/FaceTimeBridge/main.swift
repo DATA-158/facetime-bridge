@@ -113,6 +113,21 @@ if arguments.count == 5,
   exit(Int32(outcome.exitCode))
 }
 
+// --snapshot <path.jpg>: capture the FaceTime window to a file (diagnostic;
+// the service RPC is what the voice loop uses). Needs Screen Recording.
+if arguments.count == 2, arguments[0] == "--snapshot" {
+  let path = arguments[1]
+  do {
+    let shot = try await captureFaceTimeWindow(maxSide: 1280)
+    try shot.jpeg.write(to: URL(fileURLWithPath: path))
+    print("{\"ok\":true,\"width\":\(shot.width),\"height\":\(shot.height),\"bytes\":\(shot.jpeg.count)}")
+    exit(0)
+  } catch {
+    fputs("snapshot failed: \(error)\n", stderr)
+    exit(1)
+  }
+}
+
 if arguments.elementsEqual(["--self-check"]) {
   guard shouldAnswerIncoming(state: "ringing", authorized: true),
         !shouldAnswerIncoming(state: "ringing", authorized: false),
@@ -136,7 +151,7 @@ if arguments.count == 1, let command = ControlCommand(rawValue: arguments[0]) {
   runDirectControl(command)
 }
 if !arguments.isEmpty {
-  fputs("Usage: facetime-bridge [probe|call|answer|hangup|--self-check|--ax-snapshot|--ax-press]\n", stderr)
+  fputs("Usage: facetime-bridge [probe|call|answer|hangup|--self-check|--ax-snapshot|--ax-press|--snapshot <path.jpg>]\n", stderr)
   exit(2)
 }
 

@@ -29,6 +29,28 @@ struct FaceTimeMediaService: Facetimebridge_V1_FaceTimeMedia.SimpleServiceProtoc
     }
   }
 
+  func snapshot(
+    request: Facetimebridge_V1_SnapshotRequest,
+    context: ServerContext
+  ) async throws -> Facetimebridge_V1_SnapshotResponse {
+    let maxSide = request.maxSide == 0 ? 1280 : Int(request.maxSide)
+    let started = Date()
+    do {
+      let shot = try await captureFaceTimeWindow(maxSide: maxSide)
+      ftbLog("snapshot: \(shot.width)x\(shot.height) \(shot.jpeg.count) bytes in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+      return .with {
+        $0.ok = true
+        $0.jpeg = shot.jpeg
+        $0.width = UInt32(shot.width)
+        $0.height = UInt32(shot.height)
+        $0.windowTitle = shot.windowTitle
+      }
+    } catch let e as SnapshotError {
+      ftbLog("snapshot failed: \(e.code) \(e.description)")
+      return .with { $0.ok = false; $0.errorCode = e.code; $0.message = e.description }
+    }
+  }
+
   func control(
     request: Facetimebridge_V1_ControlRequest,
     context: ServerContext

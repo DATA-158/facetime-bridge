@@ -7,6 +7,9 @@ service FaceTimeMedia {
   rpc Control(ControlRequest) returns (ControlResponse);
   rpc WaitIncoming(WaitIncomingRequest) returns (stream CallEvent);
   rpc Audio(stream AudioPacket) returns (stream AudioPacket);
+  // One JPEG of the FaceTime window (the caller's camera). The filter is the
+  // FaceTime window only — no other screen content can be returned.
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
 }
 
 message HealthRequest {}
@@ -65,4 +68,18 @@ message AudioPacket {
   uint32 channels = 5;
   uint64 sequence = 6;
   string event = 7;
+}
+
+message SnapshotRequest {
+  uint32 max_side = 1;      // longest side in pixels; 0 = 1280
+}
+
+message SnapshotResponse {
+  bool ok = 1;
+  bytes jpeg = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  string window_title = 5;
+  string error_code = 6;
+  string message = 7;
 }

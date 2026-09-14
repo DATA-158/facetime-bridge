@@ -25,6 +25,13 @@ func semanticContains(_ text: String, _ expected: String) -> Bool {
     normalizedSemanticText(text).localizedCaseInsensitiveContains(normalizedSemanticText(expected))
 }
 
+/// "FaceTime Audio" or "FaceTime Video": the two call kinds a ring card, an
+/// in-call surface or a dialing surface can name. 2026-09-14: video calls
+/// are answered too, so the Captain can show DATA his camera.
+func isFaceTimeCallLabel(_ text: String) -> Bool {
+    semanticContains(text, "FaceTime Audio") || semanticContains(text, "FaceTime Video")
+}
+
 private func normalizedDigits(_ text: String) -> String {
     String(text.filter(\.isNumber))
 }
@@ -130,7 +137,7 @@ func authorizedIncomingNodes(on surface: AXSurface, target: TargetIdentity?) -> 
     let identityCards = surface.nodes.filter { node in
         node.texts.contains { text in
             (identifiesTarget(text, target: target) || bannerNameIdentity(text, target: target))
-                && semanticContains(text, "FaceTime Audio")
+                && isFaceTimeCallLabel(text)
                 && timerValue(text) == nil
                 && !semanticContains(text, "Click to Call")
                 && !semanticContains(text, "left")
@@ -158,7 +165,7 @@ func bannerNameIdentity(_ text: String, target: TargetIdentity) -> Bool {
             && !("\u{2066}"..."\u{2069}").contains(ch)
             && ch != "\u{200E}" && ch != "\u{200F}"
     }
-    guard normalized.contains("FaceTime Audio"),
+    guard isFaceTimeCallLabel(normalized),
           !semanticContains(normalized, "Click to Call"),
           !semanticContains(normalized, "ended"),
           !semanticContains(normalized, "missed"),
@@ -202,7 +209,7 @@ func state(of surface: AXSurface, target: TargetIdentity?) -> StateEvidence {
     let texts = surface.nodes.flatMap(\.texts)
     let authorized = surfaceAuthorized(surface, target: target)
     let hasFaceTime = texts.contains { semanticContains($0, "FaceTime") }
-    let hasFaceTimeAudio = texts.contains { semanticContains($0, "FaceTime Audio") }
+    let hasFaceTimeAudio = texts.contains { isFaceTimeCallLabel($0) }
     let duration = texts.compactMap(timerValue).first
     let authorizedLeft = surface.bundleID == "com.apple.notificationcenterui"
         && authorized
@@ -313,11 +320,15 @@ func identityDigitFixturePasses() -> Bool {
     // "FaceTime\u{00A0}Audio", no digits anywhere on the card.
     let named = try! TargetIdentity(handle: "+15550101001", displayName: "Captain Spencer")
     guard bannerNameIdentity("\u{202A}Captain Spencer\u{202C}, FaceTime\u{00A0}Audio", target: named),
-          bannerNameIdentity("Captain Spencer, FaceTime Audio", target: named) else { return false }
+          bannerNameIdentity("Captain Spencer, FaceTime Audio", target: named),
+          bannerNameIdentity("\u{202A}Captain Spencer\u{202C}, FaceTime\u{00A0}Video", target: named),
+          bannerNameIdentity("Captain Spencer, FaceTime Video", target: named) else { return false }
     // Boundaries: longer/other names, non-banner text, timers, ended labels.
     guard !bannerNameIdentity("Captain Spencer Jr, FaceTime Audio", target: named),
           !bannerNameIdentity("Captain Spencerine, FaceTime Audio", target: named),
           !bannerNameIdentity("Other Person, FaceTime Audio", target: named),
+          !bannerNameIdentity("Other Person, FaceTime Video", target: named),
+          !bannerNameIdentity("Captain Spencer, FaceTime", target: named),
           !bannerNameIdentity("Captain Spencer, Missed call, Incoming FaceTime Audio", target: named),
           !bannerNameIdentity("Captain Spencer, FaceTime Audio, 0:12", target: named),
           !bannerNameIdentity("Captain Spencer", target: named),
